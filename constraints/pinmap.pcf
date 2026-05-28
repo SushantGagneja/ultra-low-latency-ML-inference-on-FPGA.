@@ -1,0 +1,12 @@
+# Placeholder pin map for Shrike / SLG47910V integration.
+# Replace PACKAGE_PIN values with the actual Renesas pad assignments.
+
+set_io sys_clk   PIN_SYS_CLK
+set_io rst_n     PIN_RESET_N
+
+set_io spi_sclk  PIN_SPI_SCLK
+set_io spi_cs_n  PIN_SPI_CS_N
+set_io spi_mosi  PIN_SPI_MOSI
+set_io spi_miso  PIN_SPI_MISO
+
+set_io fpga_done PIN_FPGA_DONE
