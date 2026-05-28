@@ -1,0 +1,9 @@
+{
+    "architecture": {
+        "input": 16,
+        "hidden": 64,
+        "output": 3
+    },
+    "total_bits": 1216,
+    "bram_usage_kbits": 1.1875
+}
