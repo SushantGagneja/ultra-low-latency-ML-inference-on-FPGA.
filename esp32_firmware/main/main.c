@@ -1,13 +1,16 @@
 #include <inttypes.h>
 #include <stdint.h>
+#include <string.h>
 
 #include "esp_err.h"
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "freertos/semphr.h"
 
 #include "nvs_flash.h"
+#include "driver/gpio.h"
 
 #include "quantization.h"
 #include "spi_interface.h"
@@ -25,12 +28,75 @@ enum {
     FPGA_PIN_DONE = 9,
 };
 
+typedef struct {
+    uint16_t spike;
+    int64_t start_time;
+    bnn_indicators_t indicators;
+} inference_context_t;
+
+// Global state for tasks
+static bnn_spi_t fpga;
+static QueueHandle_t tick_queue;
+static QueueHandle_t ctx_queue;
+static SemaphoreHandle_t fpga_done_sem;
+
+// ISR triggered on FPGA_PIN_DONE rising edge
+static void IRAM_ATTR fpga_done_isr_handler(void *arg)
+{
+    BaseType_t xHigherPriorityTaskWoken = pdFALSE;
+    xSemaphoreGiveFromISR(fpga_done_sem, &xHigherPriorityTaskWoken);
+    if (xHigherPriorityTaskWoken) {
+        portYIELD_FROM_ISR();
+    }
+}
+
+// Task 2: Waits for FPGA completion, reads decision, logs result
+static void fpga_result_task(void *arg)
+{
+    inference_context_t ctx;
+    for (;;) {
+        // Wait for FPGA DONE interrupt
+        if (xSemaphoreTake(fpga_done_sem, portMAX_DELAY) == pdTRUE) {
+            
+            // Read context that was queued by the ingestion task
+            if (xQueueReceive(ctx_queue, &ctx, 0) != pdTRUE) {
+                ESP_LOGE(TAG, "FPGA DONE but no context found!");
+                continue;
+            }
+
+            bnn_decision_t decision = BNN_DECISION_INVALID;
+            esp_err_t err = bnn_spi_rx_sync(&fpga, &decision);
+            int64_t end_time = esp_timer_get_time();
+            int64_t latency_ns = (end_time - ctx.start_time) * 1000;
+
+            if (err == ESP_OK) {
+                ESP_LOGI(TAG,
+                         "{\"type\":\"bnn_inference\",\"timestamp_us\":%" PRId64
+                         ",\"spike\":\"0x%04x\",\"decision\":%u,\"latency_ns\":%" PRId64
+                         ",\"rsi\":%.2f,\"momentum\":%.6f,\"volatility\":%.6f,\"status\":\"SUCCESS\"}",
+                         esp_timer_get_time(),
+                         ctx.spike,
+                         (unsigned)decision,
+                         latency_ns,
+                         ctx.indicators.rsi,
+                         ctx.indicators.momentum,
+                         ctx.indicators.volatility);
+            } else {
+                ESP_LOGW(TAG,
+                         "{\"type\":\"bnn_inference\",\"timestamp_us\":%" PRId64
+                         ",\"spike\":\"0x%04x\",\"decision\":3,\"latency_ns\":0,\"status\":\"%s\"}",
+                         esp_timer_get_time(),
+                         ctx.spike,
+                         esp_err_to_name(err));
+            }
+        }
+    }
+}
 
 void app_main(void)
 {
     bnn_feature_state_t feature_state;
     bnn_quantizer_t quantizer;
-    bnn_spi_t fpga;
 
     // Initialize NVS (required for WiFi)
     esp_err_t ret = nvs_flash_init();
@@ -59,11 +125,21 @@ void app_main(void)
         return;
     }
 
-    QueueHandle_t tick_queue = xQueueCreate(128, sizeof(bnn_market_tick_t));
-    if (!tick_queue) {
-        ESP_LOGE(TAG, "Failed to create tick queue");
+    // Install GPIO ISR service and add handler for DONE pin
+    gpio_install_isr_service(0);
+    gpio_isr_handler_add(FPGA_PIN_DONE, fpga_done_isr_handler, NULL);
+
+    tick_queue = xQueueCreate(128, sizeof(bnn_market_tick_t));
+    ctx_queue = xQueueCreate(16, sizeof(inference_context_t));
+    fpga_done_sem = xSemaphoreCreateBinary();
+
+    if (!tick_queue || !ctx_queue || !fpga_done_sem) {
+        ESP_LOGE(TAG, "Failed to create FreeRTOS primitives");
         return;
     }
+
+    // Spawn the result task on Core 1
+    xTaskCreatePinnedToCore(fpga_result_task, "fpga_result", 4096, NULL, 10, NULL, 1);
 
     ESP_LOGI(TAG, "Initializing WiFi...");
     if (bnn_wifi_init_sta() == ESP_OK) {
@@ -78,45 +154,35 @@ void app_main(void)
         return;
     }
 
-    ESP_LOGI(TAG, "Phase 2 temporal engine online - waiting for market ticks");
+    ESP_LOGI(TAG, "Phase 5 DMA Temporal Engine online - Waiting for market ticks");
 
     for (;;) {
-        bnn_indicators_t indicators;
         bnn_market_tick_t tick;
+        inference_context_t ctx;
 
-        // Block indefinitely until a tick arrives from the WebSocket task
+        // Block indefinitely until a tick arrives
         if (xQueueReceive(tick_queue, &tick, portMAX_DELAY) != pdTRUE) {
             continue;
         }
 
-        if (!bnn_feature_update(&feature_state, &tick, &indicators)) {
+        if (!bnn_feature_update(&feature_state, &tick, &ctx.indicators)) {
             continue;
         }
 
-        const uint16_t spike = bnn_quantize_bipolar(&quantizer, &indicators);
-        bnn_decision_t decision = BNN_DECISION_INVALID;
-        int64_t latency_ns = 0;
+        ctx.spike = bnn_quantize_bipolar(&quantizer, &ctx.indicators);
+        ctx.start_time = esp_timer_get_time();
 
-        err = bnn_spi_infer(&fpga, spike, 0u, &decision, &latency_ns);
-        if (err == ESP_OK) {
-            ESP_LOGI(TAG,
-                     "{\"type\":\"bnn_inference\",\"timestamp_us\":%" PRId64
-                     ",\"spike\":\"0x%04x\",\"decision\":%u,\"latency_ns\":%" PRId64
-                     ",\"rsi\":%.2f,\"momentum\":%.6f,\"volatility\":%.6f,\"status\":\"SUCCESS\"}",
-                     esp_timer_get_time(),
-                     spike,
-                     (unsigned)decision,
-                     latency_ns,
-                     indicators.rsi,
-                     indicators.momentum,
-                     indicators.volatility);
+        // Push context to result task BEFORE initiating hardware DMA
+        if (xQueueSend(ctx_queue, &ctx, 0) == pdTRUE) {
+            // Initiate Zero-Copy DMA SPI TX (Non-blocking)
+            err = bnn_spi_tx_async(&fpga, ctx.spike, 0u);
+            if (err != ESP_OK) {
+                ESP_LOGE(TAG, "Failed to queue SPI DMA TX: %s", esp_err_to_name(err));
+            }
+            // Loop immediately without waiting for inference to finish!
+            // Achieves concurrent execution of Xtensa Core parsing next tick while FPGA computes.
         } else {
-            ESP_LOGW(TAG,
-                     "{\"type\":\"bnn_inference\",\"timestamp_us\":%" PRId64
-                     ",\"spike\":\"0x%04x\",\"decision\":3,\"latency_ns\":0,\"status\":\"%s\"}",
-                     esp_timer_get_time(),
-                     spike,
-                     esp_err_to_name(err));
+            ESP_LOGW(TAG, "Context queue full, dropping inference request");
         }
     }
 }
