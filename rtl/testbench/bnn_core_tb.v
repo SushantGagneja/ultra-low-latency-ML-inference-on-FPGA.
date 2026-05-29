@@ -106,6 +106,60 @@ module bnn_core_tb;
         $display("Starting VeriTrade BNN Core Simulation");
         $display("========================================");
         
+        $display("--- Injecting Adversarial Edge Cases ---");
+        
+        // Edge Case 1: CS_n deasserts mid-transfer
+        $display("Testing Edge Case 1: CS_n deasserts mid-transfer");
+        spi_cs_n = 0;
+        #20;
+        spi_mosi = 1;
+        #12.5 spi_sclk = 1; #12.5 spi_sclk = 0; // Bit 1
+        #12.5 spi_sclk = 1; #12.5 spi_sclk = 0; // Bit 2
+        #12.5 spi_sclk = 1; #12.5 spi_sclk = 0; // Bit 3
+        spi_cs_n = 1; // Abort!
+        #100;
+        if (dut.u_spi_slave.bit_cnt != 0 || dut.u_spi_slave.rx_ready != 0) begin
+            $fatal(1, "Edge Case 1 Failed: SPI slave did not reset on CS_n deassertion.");
+        end
+        $display("Edge Case 1 Passed.");
+        
+        // Edge Case 2: Clock stops mid-byte, then CS_n deasserts
+        $display("Testing Edge Case 2: Clock stops mid-byte");
+        spi_cs_n = 0;
+        #20;
+        spi_mosi = 0;
+        #12.5 spi_sclk = 1; // Clock stays high!
+        #50;
+        spi_cs_n = 1; // Abort
+        spi_sclk = 0;
+        #100;
+        if (dut.u_spi_slave.bit_cnt != 0) begin
+            $fatal(1, "Edge Case 2 Failed: SPI slave locked up on stuck clock.");
+        end
+        $display("Edge Case 2 Passed.");
+        
+        // Edge Case 3: Start fires while FSM is running
+        $display("Testing Edge Case 3: Start strobe during active FSM");
+        // We will trigger a real start, then manually toggle 'start' inside the DUT
+        spi_send_spike(16'hAAAA);
+        #30; 
+        force dut.u_bnn_core.start = 1;
+        #20;
+        release dut.u_bnn_core.start;
+        // Wait for it to finish properly
+        latency_cycles = 0;
+        while (fpga_done != 1'b1 && latency_cycles < 100) begin
+            @(posedge sys_clk);
+            latency_cycles = latency_cycles + 1;
+        end
+        if (latency_cycles >= 100) begin
+            $fatal(1, "Edge Case 3 Failed: FSM locked up when start fired during execution.");
+        end
+        spi_read_decision(got_decision);
+        $display("Edge Case 3 Passed.");
+        
+        $display("--- Beginning Standard Vector Verification ---");
+        
         for (i = 0; i < NUM_VECTORS; i = i + 1) begin
             // 1. Send Spike
             spi_send_spike(test_inputs[i]);
