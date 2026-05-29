@@ -32,6 +32,7 @@ typedef struct {
     uint16_t spike;
     int64_t start_time;
     bnn_indicators_t indicators;
+    float price;
 } inference_context_t;
 
 // Global state for tasks
@@ -73,14 +74,15 @@ static void fpga_result_task(void *arg)
                 ESP_LOGI(TAG,
                          "{\"type\":\"bnn_inference\",\"timestamp_us\":%" PRId64
                          ",\"spike\":\"0x%04x\",\"decision\":%u,\"latency_ns\":%" PRId64
-                         ",\"rsi\":%.2f,\"momentum\":%.6f,\"volatility\":%.6f,\"status\":\"SUCCESS\"}",
+                         ",\"rsi\":%.2f,\"momentum\":%.6f,\"volatility\":%.6f,\"price\":%.2f,\"status\":\"SUCCESS\"}",
                          esp_timer_get_time(),
                          ctx.spike,
                          (unsigned)decision,
                          latency_ns,
                          ctx.indicators.rsi,
                          ctx.indicators.momentum,
-                         ctx.indicators.volatility);
+                         ctx.indicators.volatility,
+                         ctx.price);
             } else {
                 ESP_LOGW(TAG,
                          "{\"type\":\"bnn_inference\",\"timestamp_us\":%" PRId64
@@ -171,6 +173,7 @@ void app_main(void)
 
         ctx.spike = bnn_quantize_bipolar(&quantizer, &ctx.indicators);
         ctx.start_time = esp_timer_get_time();
+        ctx.price = ctx.indicators.price;
 
         // Push context to result task BEFORE initiating hardware DMA
         if (xQueueSend(ctx_queue, &ctx, 0) == pdTRUE) {
