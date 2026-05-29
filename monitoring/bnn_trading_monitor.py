@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""BNN inference audit and latency monitor."""
+"""BNN Institutional Trading Monitor with PnL and Risk Management."""
 
 from __future__ import annotations
 
@@ -20,6 +20,7 @@ class InferenceRecord:
     spike_vector: str
     decision: int
     latency_ns: int
+    price: float = 0.0
     status: str = "SUCCESS"
 
 
@@ -39,10 +40,68 @@ class BNNTradingMonitor:
         self.latency_sla_ns = latency_sla_ns
         self.history: deque[InferenceRecord] = deque(maxlen=100000)
         self.audit = AuditLogger(audit_path)
+        
+        # PnL & Risk Model
+        self.position = 0          # 1 for Long, -1 for Short, 0 for Flat
+        self.entry_price = 0.0
+        self.realized_pnl = 0.0    # Absolute monetary PnL (simplified unit sizing)
+        self.trade_count = 0
+        self.peak_equity = 0.0
+        self.max_drawdown = 0.0
+        
+        # Risk Limits
+        self.max_position_size = 1 # E.g., max 1 BTC
+
+    def update_pnl(self, record: InferenceRecord):
+        price = record.price
+        if price <= 0.0:
+            return
+            
+        fee_rate = 0.0004 # 4 bps taker
+        
+        if record.decision == 0: # BUY
+            if self.position <= 0:
+                if self.position < 0:
+                    # Close Short
+                    trade_pnl = (self.entry_price - price) / self.entry_price - fee_rate
+                    self.realized_pnl += trade_pnl
+                    self.trade_count += 1
+                # Open Long
+                self.position = self.max_position_size
+                self.entry_price = price
+                
+        elif record.decision == 2: # SELL
+            if self.position >= 0:
+                if self.position > 0:
+                    # Close Long
+                    trade_pnl = (price - self.entry_price) / self.entry_price - fee_rate
+                    self.realized_pnl += trade_pnl
+                    self.trade_count += 1
+                # Open Short
+                self.position = -self.max_position_size
+                self.entry_price = price
+                
+        # Mark to market equity
+        equity = self.realized_pnl
+        if self.position > 0:
+            equity += (price - self.entry_price) / self.entry_price - fee_rate
+        elif self.position < 0:
+            equity += (self.entry_price - price) / self.entry_price - fee_rate
+            
+        if equity > self.peak_equity:
+            self.peak_equity = equity
+        dd = self.peak_equity - equity
+        if dd > self.max_drawdown:
+            self.max_drawdown = dd
+
 
     def log_inference(self, record: InferenceRecord) -> bool:
         self.history.append(record)
         self.audit.log_inference(record)
+        
+        if record.status == "SUCCESS":
+            self.update_pnl(record)
+            
         return record.status == "SUCCESS" and record.latency_ns <= self.latency_sla_ns
 
     def get_bnn_metrics(self) -> dict:
@@ -53,6 +112,7 @@ class BNNTradingMonitor:
         counts = Counter(r.decision for r in self.history)
         sorted_latencies = sorted(latencies)
         p99_idx = int(0.99 * (len(sorted_latencies) - 1))
+        
         return {
             "total_inferences": len(self.history),
             "decision_distribution": {
@@ -60,6 +120,13 @@ class BNNTradingMonitor:
                 "HOLD": counts.get(1, 0),
                 "SELL": counts.get(2, 0),
                 "INVALID": counts.get(3, 0),
+            },
+            "trading_performance": {
+                "current_position": self.position,
+                "entry_price": self.entry_price,
+                "realized_pnl_pct": round(self.realized_pnl * 100, 4),
+                "max_drawdown_pct": round(self.max_drawdown * 100, 4),
+                "trade_count": self.trade_count
             },
             "latency_ns": {
                 "min": min(latencies),
@@ -92,19 +159,28 @@ def parse_inference_lines(lines: Iterable[str]) -> Iterable[InferenceRecord]:
             spike_vector=str(row["spike"]),
             decision=int(row["decision"]),
             latency_ns=int(row["latency_ns"]),
+            price=float(row.get("price", 0.0)),
             status=str(row.get("status", "SUCCESS")),
         )
 
 
 def run_self_test() -> int:
     monitor = BNNTradingMonitor(latency_sla_ns=300, audit_path=Path("monitoring/test_bnn_audit.jsonl"))
+    price = 60000.0
     for i in range(10):
+        decision = i % 3
+        if decision == 0:
+            price += 100.0
+        elif decision == 2:
+            price -= 100.0
+            
         monitor.log_inference(
             InferenceRecord(
                 timestamp=time.time(),
                 spike_vector=f"0x{i:04x}",
-                decision=i % 3,
+                decision=decision,
                 latency_ns=220 + i,
+                price=price
             )
         )
     metrics = monitor.get_bnn_metrics()
@@ -113,7 +189,7 @@ def run_self_test() -> int:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="BNN compliance/audit monitor")
+    parser = argparse.ArgumentParser(description="BNN institutional compliance & PnL monitor")
     parser.add_argument("--input", type=Path, help="ESP32 serial log file; omit to read stdin")
     parser.add_argument("--audit", type=Path, default=Path("monitoring/bnn_audit.jsonl"))
     parser.add_argument("--sla-ns", type=int, default=300)
