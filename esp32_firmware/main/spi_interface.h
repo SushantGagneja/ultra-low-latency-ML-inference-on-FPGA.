@@ -27,13 +27,14 @@ typedef struct {
 typedef struct {
     spi_device_handle_t dev;
     gpio_num_t done_io;
+    uint8_t *tx_buf;
+    uint8_t *rx_buf;
+    spi_transaction_t trans_tx;
+    spi_transaction_t trans_rx;
 } bnn_spi_t;
 
 esp_err_t bnn_spi_init(bnn_spi_t *iface, const bnn_spi_config_t *cfg);
-esp_err_t bnn_spi_infer(bnn_spi_t *iface,
-                        uint16_t spike_vector,
-                        uint8_t control,
-                        bnn_decision_t *decision,
-                        int64_t *latency_ns);
+esp_err_t bnn_spi_tx_async(bnn_spi_t *iface, uint16_t spike_vector, uint8_t control);
+esp_err_t bnn_spi_rx_sync(bnn_spi_t *iface, bnn_decision_t *decision);
 
 #endif
