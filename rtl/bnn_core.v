@@ -177,4 +177,43 @@ module bnn_core (
         end
     end
 
+`ifdef FORMAL
+    // -------------------------------------------------------------------------
+    // SYSTEMVERILOG ASSERTIONS (Formal Verification)
+    // -------------------------------------------------------------------------
+
+    // 1. FSM Boundedness
+    // Prove the state machine can never enter an undefined state
+    always @(posedge clk) begin
+        if (rst_n) begin
+            assert(state <= STATE_ARGMAX);
+        end
+    end
+
+    // 2. L1 Timing Proof
+    // Prove that prefetch takes exactly 1 cycle
+    assert property (@(posedge clk) disable iff (!rst_n)
+        (state == STATE_L1_PREFETCH) |=> (state == STATE_LAYER1)
+    );
+
+    // 3. L1 Execution Proof
+    // Prove that Layer 1 takes exactly 16 cycles to process 64 neurons
+    assert property (@(posedge clk) disable iff (!rst_n)
+        (state == STATE_LAYER1) && (cycle_cnt == 0) |-> ##15 (state == STATE_L2_PREFETCH)
+    );
+
+    // 4. End-to-End Latency Proof (Non-Deadlock)
+    // Prove that asserting 'start' GUARANTEES 'done' exactly 23 cycles later
+    assert property (@(posedge clk) disable iff (!rst_n)
+        ($rose(start)) |-> ##23 (done == 1'b1)
+    );
+
+    // 5. Output Stability
+    // Prove that the decision and done signals remain stable after computation
+    assert property (@(posedge clk) disable iff (!rst_n)
+        (done == 1'b1) |=> ((decision == $past(decision)) || $rose(start))
+    );
+
+`endif
+
 endmodule
