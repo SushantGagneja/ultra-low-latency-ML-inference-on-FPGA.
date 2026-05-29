@@ -28,26 +28,26 @@ The trading pipeline is distributed across three tightly-coupled domains: Model 
 ```mermaid
 flowchart LR
     subgraph External ["External Data"]
-        BWS("Binance WS<br>btcusdt@bookTicker")
+        BWS("Binance WS")
     end
 
     subgraph ESP32 ["ESP32-S3 Firmware (C/FreeRTOS)"]
         direction TB
-        ING["Ingestion Task<br>(Zero Heap Allocations)"]
-        FEAT["O(1) Feature Extractor<br>(RSI, Momentum, Volatility)"]
-        QUANT["Bipolar Quantizer<br>(Float to 16-bit Spike)"]
-        SPIM["SPI Master<br>(DMA Split-Transaction)"]
+        ING["Ingestion Task"]
+        FEAT["O(1) Feature Extractor"]
+        QUANT["Bipolar Quantizer"]
+        SPIM["SPI Master (DMA)"]
         
         ING --> FEAT --> QUANT --> SPIM
     end
 
     subgraph FPGA ["Renesas SLG47910V (GreenPAK)"]
         direction TB
-        SPIS["SPI Slave CDC<br>(Toggle Synchronizer)"]
-        FSM["Time-Multiplexed FSM<br>(23 Cycle Latency)"]
-        BRAM[("Dual-Port BRAM<br>(1.19 kbits)")]
-        XNOR["4x16-bit XNOR<br>Popcount Arrays"]
-        OUT(("Argmax Decision<br>BUY / HOLD / SELL"))
+        SPIS["SPI Slave CDC"]
+        FSM["Time-Multiplexed FSM"]
+        BRAM[("Dual-Port BRAM")]
+        XNOR["XNOR-Popcount Arrays"]
+        OUT(("Argmax Decision"))
         
         SPIS --> FSM
         BRAM --- FSM
@@ -56,8 +56,8 @@ flowchart LR
     end
 
     BWS == "Live JSON" ==> ING
-    SPIM == "80 MHz SPI<br>16-bit Vector" ==> SPIS
-    OUT -. "Hardware Interrupt<br>DONE Signal" .-> SPIM
+    SPIM == "80 MHz SPI" ==> SPIS
+    OUT -. "DONE Interrupt" .-> SPIM
 ```
 
 ### Hardware/Software Co-Design Strategy
@@ -87,11 +87,11 @@ In a BNN, weights and activations are strictly binary. The traditional arithmeti
 
 ```mermaid
 flowchart LR
-    X["Input Vector<br>(16 bits)"] --> XNOR{"XNOR<br>Array"}
-    W["Weight Vector<br>(16 bits)"] --> XNOR
-    XNOR -->|"16 bits"| POP["Popcount<br>Adder Tree"]
-    POP -->|"Integer 0-16"| THRESH{"Threshold<br>>= 8?"}
-    THRESH -->|"1 bit"| H["Hidden<br>Activation"]
+    X["Input Vector (16 bits)"] --> XNOR{"XNOR Array"}
+    W["Weight Vector (16 bits)"] --> XNOR
+    XNOR -->|"16 bits"| POP["Popcount Adder Tree"]
+    POP -->|"Integer 0-16"| THRESH{"Threshold >= 8?"}
+    THRESH -->|"1 bit"| H["Hidden Activation"]
     
     style XNOR fill:#1f618d,stroke:#2980b9,stroke-width:2px,color:#fff
     style POP fill:#1f618d,stroke:#2980b9,stroke-width:2px,color:#fff
@@ -113,11 +113,11 @@ block-beta
   space:1
   
   %% FABRIC ROW 1
-  PIN_CLK["Pin 1:<br>SYS_CLK<br>(100MHz)"]
+  PIN_CLK["Pin 1: SYS_CLK"]
   block:CDC:3
-    SPI_SLAVE["SPI Slave Logic & CDC Toggle Synchronizer"]
+    SPI_SLAVE["SPI Slave & Toggle Sync"]
   end
-  PIN_MISO["Pin 5:<br>MISO"]
+  PIN_MISO["Pin 5: MISO"]
   
   %% FABRIC ROW 2
   space:1
@@ -129,14 +129,14 @@ block-beta
   
   %% FABRIC ROW 3
   space:1
-  BRAM[("Embedded BRAM<br>(1.19 kbits)")]
+  BRAM[("1.19kb BRAM")]
   space:1
-  ARGMAX["Winner-Take-All<br>Argmax"]
+  ARGMAX["Argmax Logic"]
   space:1
   
   %% BOTTOM I/O RING
   space:3
-  PIN_DONE["Pin 14:<br>DONE Interrupt"]
+  PIN_DONE["Pin 14: DONE"]
   space:1
 
   %% Internal Routing Lines
