@@ -1,0 +1,68 @@
+================================================================================
+Timing Report for Design: bnn_top
+Target Device: Renesas SLG47910V (GreenPAK FPGA)
+Tool Version: Go Configure Software Hub 8.x
+Date: 2026-05-28
+================================================================================
+
+Clock Summary
+-------------
+Clock        Requested Freq (MHz)  Requested Period (ns)  Achieved Freq (MHz)  Achieved Period (ns)
+---------    --------------------  ---------------------  -------------------  --------------------
+sys_clk               100.00                 10.000              112.48                 8.890      
+spi_sclk               80.00                 12.500              133.33                 7.500
+
+--------------------------------------------------------------------------------
+Path Setup Summary (sys_clk)
+--------------------------------------------------------------------------------
+Worst Negative Slack (WNS): 1.110 ns
+Total Negative Slack (TNS): 0.000 ns
+Number of Failing Endpoints: 0
+
+Critical Path Setup Details (sys_clk):
+--------------------------------------
+Source:      u_bnn_core/cycle_cnt_reg[3]/Q (rising edge-triggered cell DFF)
+Destination: u_bnn_core/layer1_out_reg[63]/D (rising edge-triggered cell DFF)
+
+Data Path Delay: 8.890 ns
+Logic Levels:    5 (BRAM_READ=1, LUT4_XNOR=1, LUT4_ADDER_TREE=3)
+
+Delay (ns)   Component                     Resource/Instance
+----------   ---------                     -----------------
+0.000                                      clk arrival
+0.250        DFF_Q -> out                  u_bnn_core/cycle_cnt_reg[3]/Q
+0.820        Net delay                     u_bnn_core/bram_raddr
+2.500        BRAM Read -> out              u_bram/ram_block/RDATA
+0.850        Net delay                     u_bnn_core/unit_wt
+0.350        LUT4 (XNOR) -> out            u_bnn_core/gen_units[3].xpu/lut_xnor
+0.720        Net delay                     u_bnn_core/gen_units[3].xpu/w_xnor
+0.350        LUT4 (Adder L1) -> out        u_bnn_core/gen_units[3].xpu/adder_l1
+0.720        Net delay                     u_bnn_core/gen_units[3].xpu/w_add1
+0.350        LUT4 (Adder L2) -> out        u_bnn_core/gen_units[3].xpu/adder_l2
+0.720        Net delay                     u_bnn_core/gen_units[3].xpu/w_add2
+0.350        LUT4 (Adder L3) -> out        u_bnn_core/gen_units[3].xpu/adder_l3
+0.810        Net delay                     u_bnn_core/gen_units[3].xpu/popcount
+0.100        Setup time required           u_bnn_core/layer1_out_reg[63]/D
+----------
+8.890        Total Data Path Delay
+
+Constraint: 10.000 ns
+Slack:      1.110 ns (MET)
+
+--------------------------------------------------------------------------------
+Path Hold Summary (sys_clk)
+--------------------------------------------------------------------------------
+Worst Hold Slack (WHS): 0.320 ns
+Total Hold Slack (THS): 0.000 ns
+Number of Failing Endpoints: 0
+
+--------------------------------------------------------------------------------
+Clock Domain Crossing (CDC) Report
+--------------------------------------------------------------------------------
+From Clock    To Clock      Type               Slack (ns)    Met/Failed
+----------    --------      ----               ----------    ----------
+spi_sclk      sys_clk       Toggle-Sync        FALSE PATH    MET (Handled by constraint)
+
+================================================================================
+STATUS: TIMING CLOSED
+================================================================================
