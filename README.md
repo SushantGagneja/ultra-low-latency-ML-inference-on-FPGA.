@@ -5,7 +5,7 @@ This repository contains the complete software, firmware, and RTL implementation
 
 In modern quantitative trading, sub-microsecond determinism is critical. By aggressively quantizing weights to `{-1, +1}` and replacing floating-point multiply-accumulate (MAC) operations with XNOR-popcount integer logic, this architecture achieves a full 16x64x3 neural network inference in exactly 23 clock cycles (230 nanoseconds at 100 MHz). 
 
-This implementation has been physically deployed, validated on silicon, and proven to operate deterministically under live market conditions.
+This implementation has been physically deployed, validated on silicon, and proven to operate deterministically through formal verification and end-to-end hardware co-simulation.
 
 ## Repository Structure
 
